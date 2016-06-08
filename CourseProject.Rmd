@@ -1,0 +1,248 @@
+---
+title: "Practical Machine Learning - Course Project"
+author: "Ilja Rasin"
+date: "5 Juni 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+
+```
+
+## Project Introduction
+###Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+###Data
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.
+
+###Tasks
+
+1. The goal of the project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. 
+
+2. We may use any of the other variables to predict with. 
+
+3. We should create a report describing:
+  * how we built our model, 
+  * how we used cross validation, 
+  * what the expected out of sample error is, and 
+  * why we made the choices we did. 
+  
+4. We will also use our prediction model to predict 20 different test cases.
+
+##Initial Setup
+Loading the required libraries:
+```{r results=FALSE, warning=FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(knitr)
+library(gbm)
+
+```
+##Data Processing
+###Data Loading 
+```{r}
+set.seed(120970)
+
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+if(!exists("training")) {
+  training <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+}
+
+if(!exists("testing")) {
+  testing <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+}
+
+```
+
+###Data Partitioning
+Partitioning the training dataset into training (60%) and testing (40%) parts:
+
+```{r}
+inTrain <- createDataPartition(training$classe, p=0.6, list=FALSE)
+myTraining <- training[inTrain, ]
+myTesting <- training[-inTrain, ]
+dim(myTraining)
+dim(myTesting)
+
+```
+###Data Clean-Up
+
+Remove NearZeroVariance variables and identity (1st column) of myTraining:
+```{r}
+nzv <- nearZeroVar(myTraining, saveMetrics=TRUE)
+myTraining <- myTraining[,nzv$nzv==FALSE]
+
+nzv<- nearZeroVar(myTesting,saveMetrics=TRUE)
+myTesting <- myTesting[,nzv$nzv==FALSE]
+
+myTraining <- myTraining[c(-1)]
+
+```
+Clean variables with more than 70% NA
+
+```{r}
+trainingV3 <- myTraining
+for(i in 1:length(myTraining)) {
+    if( sum( is.na( myTraining[, i] ) ) /nrow(myTraining) >= .7) {
+        for(j in 1:length(trainingV3)) {
+            if( length( grep(names(myTraining[i]), names(trainingV3)[j]) ) == 1)  {
+                trainingV3 <- trainingV3[ , -j]
+            }   
+        } 
+    }
+}
+
+# Set back to the original variable name
+myTraining <- trainingV3
+rm(trainingV3)
+
+```
+
+Remove the classe column and allow only variables in myTesting and testing that are also in myTraining:
+
+```{r}
+myTesting <- myTesting[colnames(myTraining)]  # allow only variables in myTesting that are also in myTraining
+classeIndex <- grep("classe", colnames(myTraining))
+testing <- testing[colnames(myTraining[, - classeIndex])] # allow only variables in testing that are also in myTraining and remove the classe column
+
+dim(myTesting)
+```
+
+Coerce the data into the same type
+
+```{r}
+for (i in 1:length(testing) ) {
+    for(j in 1:length(myTraining)) {
+        if( length( grep(names(myTraining[i]), names(testing)[j]) ) == 1)  {
+            class(testing[j]) <- class(myTraining[i])
+        }      
+    }      
+}
+
+# To get the same class between testing and myTraining
+testing <- rbind(myTraining[2, -classeIndex] , testing)
+testing <- testing[-1,]
+dim(testing)
+```
+##Prediction with Machine Learning
+###Decision Trees
+
+```{r}
+
+set.seed(120970)
+modFitA1 <- rpart(classe ~ ., data=myTraining, method="class")
+fancyRpartPlot(modFitA1)
+
+```
+
+
+####Confusion Matrix
+
+```{r}
+predictionsA1 <- predict(modFitA1, myTesting, type = "class")
+cmtree <- confusionMatrix(predictionsA1, myTesting$classe)
+cmtree
+
+```
+
+
+####Confusion Matrix Accuracy
+
+```{r}
+plot(cmtree$table, col = cmtree$byClass, main = paste("Decision Tree Confusion Matrix: Accuracy =", round(cmtree$overall['Accuracy'], 4)))
+```
+
+###Random Forests
+
+####Confusion Matrix
+```{r}
+set.seed(120970)
+modFitB1 <- randomForest(classe ~ ., data=myTraining)
+predictionB1 <- predict(modFitB1, myTesting, type = "class")
+cmrf <- confusionMatrix(predictionB1, myTesting$classe)
+cmrf
+```
+
+####Result Plot
+
+```{r}
+plot(modFitB1)
+
+```
+
+####Accuracy
+
+```{r}
+plot(cmrf$table, col = cmtree$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(cmrf$overall['Accuracy'], 4)))
+
+```
+
+###Generalized Boosted Regression
+
+```{r}
+set.seed(120970)
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 1)
+
+gbmFit1 <- train(classe ~ ., data=myTraining, method = "gbm",
+                 trControl = fitControl,
+                 verbose = FALSE)
+
+
+gbmFinMod1 <- gbmFit1$finalModel
+
+gbmPredTest <- predict(gbmFit1, newdata=myTesting)
+gbmAccuracyTest <- confusionMatrix(gbmPredTest, myTesting$classe)
+gbmAccuracyTest
+
+```
+
+####Accuracy Plot
+
+```{r}
+plot(gbmFit1, ylim=c(0.9, 1))
+
+```
+
+##The ML Algorithm of Choice - Random Forests
+
+With Random Forests the Accuracy of 99.89% could be achieved in myTesting dataset, which was higher than using Decision Trees or GBM. 
+
+The expected out-of-sample error is 100% - 99.89% = 0.11%.
+
+```{r}
+predictionB2 <- predict(modFitB1, testing, type = "class")
+predictionB2
+
+```
+```{r}
+# Write the results to a text file for submission
+write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+write_files(predictionB2)
+
+```
+
